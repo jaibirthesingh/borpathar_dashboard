@@ -1,14 +1,17 @@
-# your data: stays on your Mac, never pushed
+# --- your data: stays on your Mac, never leaves ---
 mfg_reports/*
 green_leaf_prices/*
 sale_advices/*
 tally_reports/*
+# keep the empty folder structure in the repo
 !mfg_reports/.gitkeep
 !green_leaf_prices/.gitkeep
 !sale_advices/.gitkeep
 !tally_reports/.gitkeep
-# generated output & environment
+
+# --- generated output & environment ---
 dashboard.xlsx
+data.xlsx
 .venv/
 __pycache__/
 *.pyc
