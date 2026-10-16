@@ -1,0 +1,15 @@
+# your data: stays on your Mac, never pushed
+mfg_reports/*
+green_leaf_prices/*
+sale_advices/*
+tally_reports/*
+!mfg_reports/.gitkeep
+!green_leaf_prices/.gitkeep
+!sale_advices/.gitkeep
+!tally_reports/.gitkeep
+# generated output & environment
+dashboard.xlsx
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
