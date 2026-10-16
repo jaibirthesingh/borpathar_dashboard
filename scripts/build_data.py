@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser
+import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser
 
 RECOVERY = 0.22
 MULT = 4.545
@@ -86,6 +86,20 @@ for f in glob.glob(os.path.join(ROOT, "mandays", "*.xls*")):
 mandays.sort(key=lambda m: (m.get("start") or ""))
 mandays_total = sum(m["total_mandays"] for m in mandays)
 
+# electricity: one bill per month -> kWh + cost, summed
+elec = []
+for f in glob.glob(os.path.join(ROOT, "electricity_bills", "*.pdf")):
+    try:
+        b = electricity_parser.parse_bill(f)
+        if b and b.get("units_kwh") is not None: elec.append(b)
+    except Exception as e: print("  ! elec skip", f, e)
+elec.sort(key=lambda b: (b.get("start") or ""))
+elec_kwh = sum(b["units_kwh"] for b in elec)
+elec_cost = sum(b.get("bill_amount") or 0 for b in elec)
+elec_maxdemand = max((b.get("max_demand_kva") or 0 for b in elec), default=0)
+elec_contracted = elec[-1].get("contracted_kva") if elec else None
+elec_pf = elec[-1].get("power_factor") if elec else None
+
 print(f"loaded: {len(mfg)} mfg | {len(advices)} advices | {len(green)} green | {len(tally)} tally heads | {len(mandays)} mandays periods")
 
 # ---------- derive ----------
@@ -96,6 +110,8 @@ gl_todate = mfg[-1]["gl_todate_kg"] if mfg else gl_kg
 recovery_td = (mfg[-1]["recovery_todate_pct"] if mfg else RECOVERY*100)
 mandays_per_kg = (mandays_total/tea_todate) if tea_todate else 0
 kg_per_manday = (tea_todate/mandays_total) if mandays_total else 0
+kwh_per_kg = (elec_kwh/tea_todate) if tea_todate else 0
+electricity_inr_kg = (elec_cost/tea_todate) if tea_todate else 0
 
 tally_total = sum(t["amount"] for t in tally)
 tvar = sum(t["amount"] for t in tally if t["cls"]=="variable")
@@ -151,13 +167,21 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["invoice_clearance", round(clearance,4), "fraction"],
     ["closing_stock", round(stock,0), "kg"],
     ["mandays_todate", round(mandays_total,1), "mandays"],
-    ["mandays_per_kg", round(mandays_per_kg,5), "mandays/kg"],
     ["kg_per_manday", round(kg_per_manday,1), "kg/manday"],
+    ["kwh_per_kg", round(kwh_per_kg,3), "kWh/kg"],
+    ["electricity_inr_kg", round(electricity_inr_kg,2), "INR/kg"],
+    ["max_demand_kva", round(elec_maxdemand,1) if elec_maxdemand else None, "KVA"],
+    ["contracted_kva", elec_contracted, "KVA"],
+    ["power_factor", elec_pf, "%"],
     ["generated", datetime.now().strftime("%Y-%m-%d %H:%M"), "timestamp"],
 ])
 # Mandays — per-period totals (trend)
 sheet("Mandays", ["period_start","period_end","total_mandays"],
     [[m.get("start"), m.get("end"), m["total_mandays"]] for m in mandays])
+# Electricity — per-bill (trend)
+sheet("Electricity", ["period_start","period_end","units_kwh","bill_amount_inr","max_demand_kva","power_factor"],
+    [[b.get("start"), b.get("end"), b.get("units_kwh"), b.get("bill_amount"),
+      b.get("max_demand_kva"), b.get("power_factor")] for b in elec])
 # GreenLeaf
 sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg"],
     [[g["period_from"], g["period_to"], round(g["kg"],1), round(g["rate"],2), round(g["amount"],0),
