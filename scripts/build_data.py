@@ -133,6 +133,15 @@ uniq = len(inv); ever = sum(1 for v in inv.values() if v); clearance = ever/uniq
 auc_sold_kg = sum(a["sold"] or 0 for a in advices)
 auc_sold_val = sum((a["sold"] or 0)*(a["avg"] or 0) for a in advices)
 auc_real = auc_sold_val/auc_sold_kg if auc_sold_kg else 0
+# primary vs secondary realization: second-grade teas end in "1" (BP1, D1, BOPSM1)
+_pv=_pk=_sv=_sk=0
+for _a in advices:
+    for _lot in _a["lots"]:
+        if _lot["sold"] and _lot["price"]:
+            if _re.search(r"1$", _lot["grade"]): _sv+=_lot["price"]*_lot["net_wt"]; _sk+=_lot["net_wt"]
+            else: _pv+=_lot["price"]*_lot["net_wt"]; _pk+=_lot["net_wt"]
+avg_primary_rate = _pv/_pk if _pk else 0
+avg_secondary_rate = _sv/_sk if _sk else 0
 stock = tea_todate - SEASON_SOLD_KG
 
 # ---------- write workbook ----------
@@ -161,6 +170,8 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["conversion_cost", round(conv_used,2), "INR/kg"],
     ["made_tea_cost", round(made_cost,2), "INR/kg"],
     ["auction_realization", round(auc_real,2), "INR/kg"],
+    ["avg_primary_rate", round(avg_primary_rate,2), "INR/kg"],
+    ["avg_secondary_rate", round(avg_secondary_rate,2), "INR/kg"],
     ["full_cost_spread", round(auc_real-made_cost,2), "INR/kg"],
     ["marginal_floor", round(marginal_floor,2), "INR/kg"],
     ["headroom_above_floor", round(auc_real-marginal_floor,2), "INR/kg"],
