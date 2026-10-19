@@ -170,6 +170,8 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["conversion_cost", round(conv_used,2), "INR/kg"],
     ["made_tea_cost", round(made_cost,2), "INR/kg"],
     ["auction_realization", round(auc_real,2), "INR/kg"],
+    ["avg_primary_rate", round(avg_primary_rate,2), "INR/kg"],
+    ["avg_secondary_rate", round(avg_secondary_rate,2), "INR/kg"],
     ["full_cost_spread", round(auc_real-made_cost,2), "INR/kg"],
     ["marginal_floor", round(marginal_floor,2), "INR/kg"],
     ["headroom_above_floor", round(auc_real-marginal_floor,2), "INR/kg"],
@@ -182,8 +184,6 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["max_demand_kva", round(elec_maxdemand,1) if elec_maxdemand else None, "KVA"],
     ["contracted_kva", elec_contracted, "KVA"],
     ["power_factor", elec_pf, "%"],
-    ["avg_primary_rate", round(avg_primary_rate,2), "INR/kg"],
-    ["avg_secondary_rate", round(avg_secondary_rate,2), "INR/kg"],
     ["generated", datetime.now().strftime("%Y-%m-%d %H:%M"), "timestamp"],
 ])
 # Mandays — per-period totals (trend)
