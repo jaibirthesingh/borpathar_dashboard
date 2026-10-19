@@ -5,6 +5,7 @@ sale_advices/*
 tally_reports/*
 mandays/*
 electricity_bills/*
+private_sale_advices/*
 # keep the empty folder structure in the repo
 !mfg_reports/.gitkeep
 !green_leaf_prices/.gitkeep
@@ -12,6 +13,7 @@ electricity_bills/*
 !tally_reports/.gitkeep
 !mandays/.gitkeep
 !electricity_bills/.gitkeep
+!private_sale_advices/.gitkeep
 
 # --- generated output & environment ---
 dashboard.xlsx

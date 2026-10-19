@@ -14,12 +14,12 @@ from openpyxl.utils import get_column_letter
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser
+import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser
 
 RECOVERY = 0.22
 MULT = 4.545
 CONV_COST = 45.0
-SEASON_SOLD_KG = 149583.2  # all-channel sold to date (sales ledger, manual)
+# (removed hardcoded SEASON_SOLD_KG — stock is now computed live from auction sold every run)
 
 # 2024 reference for YoY (historical; 1-Apr-24 to 31-Aug-24, made tea 113,770 kg)
 YOY_2024_MADE = 113770.0
@@ -100,6 +100,19 @@ elec_maxdemand = max((b.get("max_demand_kva") or 0 for b in elec), default=0)
 elec_contracted = elec[-1].get("contracted_kva") if elec else None
 elec_pf = elec[-1].get("power_factor") if elec else None
 
+# private sales: per-invoice GST .xlsx (HUL, Tata, direct) — NON-auction, grade-wise.
+# Adds to the weekly auction figure; no overlap. One invoice = one file (subfolders ok).
+priv_invoices = []
+for f in glob.glob(os.path.join(ROOT, "private_sale_advices", "**", "*.xls*"), recursive=True):
+    if os.path.basename(f).startswith("~$"): continue
+    try:
+        inv = private_advice_parser.parse_private_invoice(f)
+        if inv and inv.get("lines"): priv_invoices.append(inv)
+    except Exception as e: print("  ! private skip", f, e)
+priv_lines = [l for inv in priv_invoices for l in inv["lines"]]
+priv_sold_kg = sum(l["qty"] for l in priv_lines)
+priv_sold_val = sum(l["amount"] or 0 for l in priv_lines)
+
 print(f"loaded: {len(mfg)} mfg | {len(advices)} advices | {len(green)} green | {len(tally)} tally heads | {len(mandays)} mandays periods")
 
 # ---------- derive ----------
@@ -140,9 +153,16 @@ for _a in advices:
         if _lot["sold"] and _lot["price"]:
             if _re.search(r"1$", _lot["grade"]): _sv+=_lot["price"]*_lot["net_wt"]; _sk+=_lot["net_wt"]
             else: _pv+=_lot["price"]*_lot["net_wt"]; _pk+=_lot["net_wt"]
+# fold private-sale invoice lines in -> primary/secondary become ALL-channel
+for _l in priv_lines:
+    if _l["amount"] and _l["qty"]:
+        if _re.search(r"1$", _l["grade"]): _sv+=_l["amount"]; _sk+=_l["qty"]
+        else: _pv+=_l["amount"]; _pk+=_l["qty"]
 avg_primary_rate = _pv/_pk if _pk else 0
 avg_secondary_rate = _sv/_sk if _sk else 0
-stock = tea_todate - SEASON_SOLD_KG
+# total sold = auction (weekly advices) + private (invoices). They add; no overlap.
+all_channel_sold = auc_sold_kg + priv_sold_kg
+stock = tea_todate - all_channel_sold
 
 # ---------- write workbook ----------
 wb = openpyxl.Workbook(); wb.remove(wb.active)
@@ -229,7 +249,7 @@ sheet("Economics", ["item","value","unit"], [
     ["made_cost_inr_kg", round(made_cost,2), "INR/kg"],
     ["auction_sold_kg", round(auc_sold_kg,1), "kg"],
     ["auction_realization_inr_kg", round(auc_real,2), "INR/kg"],
-    ["all_channel_sold_kg", SEASON_SOLD_KG, "kg"],
+    ["all_channel_sold_kg", round(all_channel_sold,1), "kg"],
     ["full_cost_spread_inr_kg", round(auc_real-made_cost,2), "INR/kg"],
     ["marginal_floor_inr_kg", round(marginal_floor,2), "INR/kg"],
     ["closing_stock_kg", round(stock,0), "kg"],
