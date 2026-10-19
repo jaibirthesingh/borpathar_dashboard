@@ -259,6 +259,22 @@ yrows.append(["TOTAL (all heads)", round(sum(YOY_2024.values()),0), round(sum(YO
               round(tally_total/tea_todate - sum(YOY_2024.values())/YOY_2024_MADE,2)])
 sheet("YoY_Expenses", ["head","amount_2024","per_kg_2024","amount_2026","per_kg_2026","delta_per_kg"], yrows)
 
+# Timeline — cost vs realization on one weekly grid (auction dates).
+# Leaf rate carried forward: the rate in force on each auction date.
+def _leaf_rate_on(dstr):
+    r = None
+    for g in green:  # green sorted by period_from
+        if g["period_from"] <= dstr: r = g["rate"]
+    return r
+_tl = []
+for a in advices:
+    if not a.get("date"): continue
+    lr = _leaf_rate_on(a["date"])
+    cost = round(lr*MULT + conv_used, 2) if lr else None
+    real = a["avg"] if a.get("avg") else None   # skip 100%-unsold weeks
+    _tl.append([a["date"], real, cost])
+sheet("Timeline", ["date","realization","made_cost"], _tl)
+
 out = os.path.join(ROOT, "data.xlsx")
 wb.save(out)
 print("wrote", out, "with tabs:", wb.sheetnames)
