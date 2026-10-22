@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser
+import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser, grade_gap_parser
 
 RECOVERY = 0.22
 MULT = 4.545
@@ -44,8 +44,16 @@ for f in sorted(glob.glob(os.path.join(ROOT, "sale_advices", "*.pdf"))):
     except Exception as e: print("  ! advice skip", f, e)
 advices = [a for a in advices if a.get("sale_no")]; advices.sort(key=lambda a: a["sale_no"])
 
+# grade-gap benchmark: one Parcon Range-Grade-Report .xlsx per sale (GUW+BLF market avg/grade)
+gradegap = []
+for f in sorted(glob.glob(os.path.join(ROOT, "grade_gap", "*.xls*"))):
+    if os.path.basename(f).startswith("~$"): continue
+    try: gradegap.append(grade_gap_parser.parse_grade_gap(f))
+    except Exception as e: print("  ! grade_gap skip", f, e)
+gradegap = [g for g in gradegap if g.get("sale_no")]; gradegap.sort(key=lambda g: g["sale_no"])
+
 green = []
-for f in glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.csv")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.xls*")):
+for f in glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.csv")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.xls*")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.pdf")):
     try: green += green_leaf_parser.parse_green_leaf(f)
     except Exception as e: print("  ! green skip", f, e)
 green.sort(key=lambda r: r["period_from"])
@@ -116,7 +124,7 @@ priv_sold_val = sum(l["amount"] or 0 for l in priv_lines)
 print(f"loaded: {len(mfg)} mfg | {len(advices)} advices | {len(green)} green | {len(tally)} tally heads | {len(mandays)} mandays periods")
 
 # ---------- derive ----------
-gl_kg = sum(r["kg"] for r in green); gl_spend = sum(r["amount"] for r in green)
+gl_kg = sum(r["kg"] for r in green); gl_spend = sum((r["amount"] or 0) for r in green)
 gl_rate = gl_spend/gl_kg if gl_kg else 0
 tea_todate = mfg[-1]["tea_made_todate_kg"] if mfg else gl_kg*RECOVERY
 gl_todate = mfg[-1]["gl_todate_kg"] if mfg else gl_kg
@@ -193,6 +201,39 @@ _made_sorted = _mp + _ms
 primary_made_pct = (_mp/_made_sorted*100) if _made_sorted else 0
 secondary_made_pct = (_ms/_made_sorted*100) if _made_sorted else 0
 
+# --- PREMIUM OVER MARKET (primary grades; benchmark = GUW+BLF grade gap) ---
+# Secondaries ("1"-suffix) have no benchmark in the report -> primary-only by design.
+_PRIM = {"BOP","BOPSM","BP","PF","PD","D"}
+_mkt = {}  # (sale, grade) -> market avg price (current season)
+for _g in gradegap:
+    for _grd, _px in _g["grades"].items():
+        _mkt[(_g["sale_no"], _grd)] = _px
+# my auction price per grade per sale, kg-weighted over sold lots
+_myg = defaultdict(lambda: [0.0, 0.0])  # (sale, grade) -> [value, kg]
+for _a in advices:
+    for _lot in _a["lots"]:
+        if _lot["sold"] and _lot["price"] and _lot["grade"] in _PRIM:
+            _myg[(_a["sale_no"], _lot["grade"])][0] += _lot["price"]*_lot["net_wt"]
+            _myg[(_a["sale_no"], _lot["grade"])][1] += _lot["net_wt"]
+_bench_rows = sorted(([g["sale_no"], grd, round(px,2)] for g in gradegap for grd,px in g["grades"].items()),
+                     key=lambda r: (r[0], r[1]))
+_prem_rows = []
+_bysale = defaultdict(lambda: [0.0, 0.0, 0.0])  # sale -> [sum(kg*prem), sum(kg), sum(kg*my)]
+for (_sale, _grd), (_val, _kg) in sorted(_myg.items()):
+    if _kg <= 0: continue
+    _m = _mkt.get((_sale, _grd))
+    if _m is None: continue
+    _my = _val/_kg; _p = _my - _m
+    _prem_rows.append([_sale, _grd, round(_my,2), round(_m,2), round(_p,1), round(_kg,1)])
+    _bysale[_sale][0] += _kg*_p; _bysale[_sale][1] += _kg; _bysale[_sale][2] += _kg*_my
+_adate = {a["sale_no"]: a["date"] for a in advices}
+_prembysale_rows = []
+for _sale in sorted(_bysale):
+    _wp, _w, _wmy = _bysale[_sale]
+    if _w <= 0: continue
+    _prembysale_rows.append([_sale, _adate.get(_sale), round(_wp/_w,1), round(_w,1),
+                             round(_wmy/_w,2), round(_wmy/_w - _wp/_w,2)])
+
 # ---------- write workbook ----------
 wb = openpyxl.Workbook(); wb.remove(wb.active)
 TSTYLE = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True, showColumnStripes=False)
@@ -247,15 +288,21 @@ sheet("Electricity", ["period_start","period_end","units_kwh","bill_amount_inr",
     [[b.get("start"), b.get("end"), b.get("units_kwh"), b.get("bill_amount"),
       b.get("max_demand_kva"), b.get("power_factor")] for b in elec])
 # GreenLeaf
-sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg"],
-    [[g["period_from"], g["period_to"], round(g["kg"],1), round(g["rate"],2), round(g["amount"],0),
-      round(g["kg"]*RECOVERY,1), round(g["rate"]*MULT+conv_used,2)] for g in green])
+sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg","fine_pct"],
+    [[g["period_from"], g["period_to"], round(g["kg"],1), round((g["rate"] or 0),2), round((g["amount"] or 0),0),
+      round(g["kg"]*RECOVERY,1), round((g["rate"] or 0)*MULT+conv_used,2), g.get("fine_pct")] for g in green])
 # Auction
 sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct"],
     [[a["sale_no"], a["date"], round(a["offered"] or 0,1), round(a["sold"] or 0,1), round(a["avg"] or 0,2),
       round((1-(a["sold"] or 0)/a["offered"]) if a["offered"] else 0,4)] for a in advices])
 # GradePrices — all-channel (auction + private) avg sold price per grade, kg-weighted
 sheet("GradePrices", ["Grade","Avg Sold Price","Sold Kg"], grade_prices)
+# Benchmark — GUW+BLF market avg price, per sale per grade (Parcon grade gap)
+sheet("Benchmark", ["sale_no","grade","market_inr_kg"], _bench_rows)
+# Premium — my auction price minus market, per sale per primary grade
+sheet("Premium", ["sale_no","grade","my_inr_kg","market_inr_kg","premium_inr_kg","sold_kg"], _prem_rows)
+# PremiumBySale — headline: volume-weighted premium per sale (your price vs market)
+sheet("PremiumBySale", ["sale_no","date","vol_wtd_premium","sold_kg","my_avg_inr_kg","market_avg_inr_kg"], _prembysale_rows)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
