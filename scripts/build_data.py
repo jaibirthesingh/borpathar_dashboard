@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser, grade_gap_parser
+import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser, grade_gap_parser, leaf_quality_parser
 
 RECOVERY = 0.22
 MULT = 4.545
@@ -52,8 +52,21 @@ for f in sorted(glob.glob(os.path.join(ROOT, "grade_gap", "*.xls*"))):
     except Exception as e: print("  ! grade_gap skip", f, e)
 gradegap = [g for g in gradegap if g.get("sale_no")]; gradegap.sort(key=lambda g: g["sale_no"])
 
+# leaf-quality weekly (GL_KG / AV.RATE export): separate feed for the fine%/premium work.
+# Does NOT touch the green-leaf price feed above.
+leafq = []
+for f in (glob.glob(os.path.join(ROOT, "leaf_quality", "*.pdf")) +
+          glob.glob(os.path.join(ROOT, "leaf_quality", "*.xls*")) +
+          glob.glob(os.path.join(ROOT, "leaf_quality", "*.csv"))):
+    if os.path.basename(f).startswith("~$"): continue
+    try: leafq += leaf_quality_parser.parse_leaf_quality(f)
+    except Exception as e: print("  ! leaf_quality skip", f, e)
+_lq = {}
+for r in leafq: _lq[r["period_from"]] = r
+leafq = sorted(_lq.values(), key=lambda r: r["period_from"])
+
 green = []
-for f in glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.csv")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.xls*")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.pdf")):
+for f in glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.csv")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.xls*")):
     try: green += green_leaf_parser.parse_green_leaf(f)
     except Exception as e: print("  ! green skip", f, e)
 green.sort(key=lambda r: r["period_from"])
@@ -124,7 +137,7 @@ priv_sold_val = sum(l["amount"] or 0 for l in priv_lines)
 print(f"loaded: {len(mfg)} mfg | {len(advices)} advices | {len(green)} green | {len(tally)} tally heads | {len(mandays)} mandays periods")
 
 # ---------- derive ----------
-gl_kg = sum(r["kg"] for r in green); gl_spend = sum((r["amount"] or 0) for r in green)
+gl_kg = sum(r["kg"] for r in green); gl_spend = sum(r["amount"] for r in green)
 gl_rate = gl_spend/gl_kg if gl_kg else 0
 tea_todate = mfg[-1]["tea_made_todate_kg"] if mfg else gl_kg*RECOVERY
 gl_todate = mfg[-1]["gl_todate_kg"] if mfg else gl_kg
@@ -288,9 +301,9 @@ sheet("Electricity", ["period_start","period_end","units_kwh","bill_amount_inr",
     [[b.get("start"), b.get("end"), b.get("units_kwh"), b.get("bill_amount"),
       b.get("max_demand_kva"), b.get("power_factor")] for b in elec])
 # GreenLeaf
-sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg","fine_pct"],
-    [[g["period_from"], g["period_to"], round(g["kg"],1), round((g["rate"] or 0),2), round((g["amount"] or 0),0),
-      round(g["kg"]*RECOVERY,1), round((g["rate"] or 0)*MULT+conv_used,2), g.get("fine_pct")] for g in green])
+sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg"],
+    [[g["period_from"], g["period_to"], round(g["kg"],1), round(g["rate"],2), round(g["amount"],0),
+      round(g["kg"]*RECOVERY,1), round(g["rate"]*MULT+conv_used,2)] for g in green])
 # Auction
 sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct"],
     [[a["sale_no"], a["date"], round(a["offered"] or 0,1), round(a["sold"] or 0,1), round(a["avg"] or 0,2),
@@ -303,6 +316,10 @@ sheet("Benchmark", ["sale_no","grade","market_inr_kg"], _bench_rows)
 sheet("Premium", ["sale_no","grade","my_inr_kg","market_inr_kg","premium_inr_kg","sold_kg"], _prem_rows)
 # PremiumBySale — headline: volume-weighted premium per sale (your price vs market)
 sheet("PremiumBySale", ["sale_no","date","vol_wtd_premium","sold_kg","my_avg_inr_kg","market_avg_inr_kg"], _prembysale_rows)
+# LeafQuality — weekly GL_KG/AV.RATE feed: fine% + volume for the quality analysis (separate feed)
+sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","fine_pct"],
+    [[r["period_from"], r["period_to"], round(r["gl_kg"],1), round((r["rate"] or 0),2),
+      round((r["amount"] or 0),0), r["fine_pct"]] for r in leafq])
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,

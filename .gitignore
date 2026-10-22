@@ -7,6 +7,7 @@ mandays/*
 electricity_bills/*
 private_sale_advices/*
 grade_gap/*
+leaf_quality/*
 # keep the empty folder structure in the repo
 !mfg_reports/.gitkeep
 !green_leaf_prices/.gitkeep
@@ -16,6 +17,7 @@ grade_gap/*
 !electricity_bills/.gitkeep
 !private_sale_advices/.gitkeep
 !grade_gap/.gitkeep
+!leaf_quality/.gitkeep
 
 # --- generated output & environment ---
 dashboard.xlsx
