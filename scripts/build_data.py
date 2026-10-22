@@ -331,21 +331,23 @@ def _iso2d(s):
     try: return _dt.date.fromisoformat(str(s))
     except Exception: return None
 _mkt_by_sale = {r[0]: r[5] for r in _prembysale_rows}  # sale_no -> market_avg_inr_kg
+# Keyed by LEAF WEEK so leaf extends back to 01-Apr. Each week gets the auction number it feeds,
+# back-calculated from the weekly cadence (anchor: sale 20 = 12-May-2026) and the 3-week leaf->auction
+# lag. Auction/market fill only where a real sale exists (20-42); earlier leaf sits at sale<20,
+# and the most recent leaf (not yet auctioned) at sale>42. One contiguous table => Mac-safe chart.
+_SALE20_NO, _SALE20_DT = 20, _dt.date(2026, 5, 12)
+_sale_data = {a["sale_no"]: (round(a["avg"], 2) if a.get("avg") else None, _mkt_by_sale.get(a["sale_no"]))
+              for a in advices if a.get("sale_no")}
 _lv = []
-for a in advices:
-    if not a.get("date") or not a.get("avg"): continue
-    _sd = _iso2d(a["date"])
-    if not _sd: continue
-    _tgt = _sd - _dt.timedelta(weeks=3)
-    _lf = None
-    for w in leafq:
-        _pf = _iso2d(w["period_from"]); _pt = _iso2d(w["period_to"])
-        if _pf and _pt and _pf <= _tgt <= _pt: _lf = w; break
-    if _lf:
-        _lv.append([a["sale_no"], a["date"], round((_lf.get("rate") or 0),2),
-                    _lf.get("fine_pct"), round(a["avg"],2), _mkt_by_sale.get(a["sale_no"])])
-# all four series in ONE contiguous table so a single chart draws every line (Mac-safe)
-sheet("LeafVsAuction", ["sale_no","date","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
+for w in leafq:
+    _pt = _iso2d(w["period_to"])
+    if not _pt: continue
+    _fed = _SALE20_NO + round(((_pt + _dt.timedelta(days=21)) - _SALE20_DT).days / 7)
+    _auc, _mkt = _sale_data.get(_fed, (None, None))
+    _lv.append([_fed, w["period_from"], round((w.get("rate") or 0), 2),
+                w.get("fine_pct"), _auc, _mkt])
+_lv.sort(key=lambda r: r[0])
+sheet("LeafVsAuction", ["sale_no","leaf_week_from","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
