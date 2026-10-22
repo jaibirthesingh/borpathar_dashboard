@@ -325,6 +325,25 @@ sheet("PremiumBySale", ["sale_no","date","vol_wtd_premium","sold_kg","my_avg_inr
 sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","fine_pct"],
     [[r["period_from"], r["period_to"], round(r["gl_kg"],1), round((r["rate"] or 0),2),
       round((r["amount"] or 0),0), r["fine_pct"]] for r in leafq])
+# LeafVsAuction — LAGGED: each sale paired with the leaf (rate+fine%) from ~3wk prior that fed it.
+# For the headline quality chart: purchased GL rate + fine% vs auction realization.
+def _iso2d(s):
+    try: return _dt.date.fromisoformat(str(s))
+    except Exception: return None
+_lv = []
+for a in advices:
+    if not a.get("date") or not a.get("avg"): continue
+    _sd = _iso2d(a["date"])
+    if not _sd: continue
+    _tgt = _sd - _dt.timedelta(weeks=3)
+    _lf = None
+    for w in leafq:
+        _pf = _iso2d(w["period_from"]); _pt = _iso2d(w["period_to"])
+        if _pf and _pt and _pf <= _tgt <= _pt: _lf = w; break
+    if _lf:
+        _lv.append([a["sale_no"], a["date"], round((_lf.get("rate") or 0),2),
+                    _lf.get("fine_pct"), round(a["avg"],2)])
+sheet("LeafVsAuction", ["sale_no","date","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg"], _lv)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
