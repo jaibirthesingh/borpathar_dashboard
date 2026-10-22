@@ -164,6 +164,35 @@ avg_secondary_rate = _sv/_sk if _sk else 0
 all_channel_sold = auc_sold_kg + priv_sold_kg
 stock = tea_todate - all_channel_sold
 
+# --- NEW METRICS (Oct 2026): channel split, grade prices, primary/secondary made % ---
+# Channel split by kg (share of total tonnage sold)
+auction_sale_pct = (auc_sold_kg/all_channel_sold*100) if all_channel_sold else 0
+private_sale_pct = (priv_sold_kg/all_channel_sold*100) if all_channel_sold else 0
+# Grade-wise avg sold price, ALL-CHANNEL (auction lots + private invoice lines), weighted by kg
+_gp = defaultdict(lambda: [0.0, 0.0])  # grade -> [value_inr, kg]
+for _a in advices:
+    for _lot in _a["lots"]:
+        if _lot["sold"] and _lot["price"]:
+            _gp[_lot["grade"]][0] += _lot["price"]*_lot["net_wt"]
+            _gp[_lot["grade"]][1] += _lot["net_wt"]
+for _l in priv_lines:
+    if _l["amount"] and _l["qty"]:
+        _gp[_l["grade"]][0] += _l["amount"]
+        _gp[_l["grade"]][1] += _l["qty"]
+grade_prices = sorted(([g, round(v/k, 2), round(k, 1)] for g, (v, k) in _gp.items() if k > 0),
+                      key=lambda r: -r[2])  # sorted by sold kg, biggest first
+# Primary vs Secondary made tea %, from MFG daily sorting.
+# SEC column = secondary ("1"-suffix marks) bucket; everything else (incl. DUST) = primary.
+_mp = _ms = 0.0
+for _m in mfg:
+    for _g, _kg in (_m.get("sorting_grades_kg") or {}).items():
+        if _g == "TOTAL" or _kg is None: continue
+        if _g == "SEC": _ms += _kg
+        else: _mp += _kg
+_made_sorted = _mp + _ms
+primary_made_pct = (_mp/_made_sorted*100) if _made_sorted else 0
+secondary_made_pct = (_ms/_made_sorted*100) if _made_sorted else 0
+
 # ---------- write workbook ----------
 wb = openpyxl.Workbook(); wb.remove(wb.active)
 TSTYLE = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True, showColumnStripes=False)
@@ -204,6 +233,10 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["max_demand_kva", round(elec_maxdemand,1) if elec_maxdemand else None, "KVA"],
     ["contracted_kva", elec_contracted, "KVA"],
     ["power_factor", elec_pf, "%"],
+    ["Auction Sale %", round(auction_sale_pct, 2), "%"],
+    ["Private Sale %", round(private_sale_pct, 2), "%"],
+    ["Primary Made Tea %", round(primary_made_pct, 2), "%"],
+    ["Secondary Made Tea %", round(secondary_made_pct, 2), "%"],
     ["generated", datetime.now().strftime("%Y-%m-%d %H:%M"), "timestamp"],
 ])
 # Mandays — per-period totals (trend)
@@ -221,19 +254,44 @@ sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr"
 sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct"],
     [[a["sale_no"], a["date"], round(a["offered"] or 0,1), round(a["sold"] or 0,1), round(a["avg"] or 0,2),
       round((1-(a["sold"] or 0)/a["offered"]) if a["offered"] else 0,4)] for a in advices])
+# GradePrices — all-channel (auction + private) avg sold price per grade, kg-weighted
+sheet("GradePrices", ["Grade","Avg Sold Price","Sold Kg"], grade_prices)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
     [[m["date"], m.get("gl_consumed_kg"), m.get("gl_received_today_kg"), m.get("tea_made_today_kg"),
       m.get("recovery_today_pct"), (m.get("avg_gl_fine_pct") or 0)*100, round(m.get("labour_cost_perkg_today") or 0,2),
       round(m.get("coal_perkg_today") or 0,3)] + [(m.get("sorting_grades_kg") or {}).get(g) for g in gcols] for m in mfg])
-# Expenses
+# Expenses — line-item labels cleaned to your dashboard names at source (survives refresh).
+# Raw Tally ledger head -> clean label. Edit here to add/adjust; class & YoY matching are
+# unaffected (they read the raw tally list, not these display labels).
+_EXP_LABEL_SRC = {
+    "Power & Fuel Expenses": "Power & Fuel",
+    "Bank Interest and Charges": "Bank Interest & Charges",
+    "Employees Benefit Expenses": "Salary & Labour",
+    "Packing Expenses": "Packaging",
+    "Freight Travelling Carriage Loading": "Transport",
+    "Selling & Distribution Expenses": "Selling & Distribution",
+    "Repairing & Maintenance": "Repairing & Maintenance",
+    "Insurance Charges": "Insurance Charges",
+    "INTEREST (PARCON INDIA)": "Interest-Parcon",
+    "Miscellaneous Expenses": "Miscellaneous",
+    "GOVT RATES FEES AND TAXES": "Govt Taxes",
+    "Professional-Fee": "Professional-Fee",
+    "Office Rental Expenses": "HO Rental",
+}
+_norm = lambda s: _re.sub(r"\s+", " ", str(s)).strip().upper()
+_EXP_LABEL = {_norm(k): v for k, v in _EXP_LABEL_SRC.items()}
+def _exp_label(raw): return _EXP_LABEL.get(_norm(raw), raw)
+for _t in tally:  # loudly flag any new ledger head with no clean label yet (shows raw)
+    if _norm(_t["head"]) not in _EXP_LABEL:
+        print(f"  ! expense head has no dashboard label (showing raw): {_t['head']!r}")
 if tloaded:
-    sheet("Expenses", ["head","amount_inr","class","pct_of_total","per_kg_made"],
-        [[t["head"], round(t["amount"],0), t["cls"], round(t["amount"]/tally_total,4), round(t["amount"]/tea_todate,2)]
+    sheet("Expenses", ["Parameter","Amount","class","pct_of_total","per_kg_made"],
+        [[_exp_label(t["head"]), round(t["amount"],0), t["cls"], round(t["amount"]/tally_total,4), round(t["amount"]/tea_todate,2)]
          for t in sorted(tally, key=lambda x:-x["amount"])])
 else:
-    sheet("Expenses", ["head","amount_inr","class","pct_of_total","per_kg_made"], [])
+    sheet("Expenses", ["Parameter","Amount","class","pct_of_total","per_kg_made"], [])
 # Economics
 sheet("Economics", ["item","value","unit"], [
     ["green_leaf_kg", round(gl_kg,1), "kg"],
