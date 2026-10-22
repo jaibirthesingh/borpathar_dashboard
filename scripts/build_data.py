@@ -64,6 +64,10 @@ for f in (glob.glob(os.path.join(ROOT, "leaf_quality", "*.pdf")) +
 _lq = {}
 for r in leafq: _lq[r["period_from"]] = r
 leafq = sorted(_lq.values(), key=lambda r: r["period_from"])
+# weighted-avg green-leaf fine % to date (kg-weighted, from the leaf-quality feed)
+_flk = sum(r["gl_kg"] for r in leafq if r.get("fine_pct") is not None and r.get("gl_kg"))
+_flw = sum(r["gl_kg"]*r["fine_pct"] for r in leafq if r.get("fine_pct") is not None and r.get("gl_kg"))
+avg_gl_fine_pct = (_flw/_flk) if _flk else 0
 
 green = []
 for f in glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.csv")) + glob.glob(os.path.join(ROOT, "green_leaf_prices", "*.xls*")):
@@ -291,6 +295,7 @@ sheet("KPIs", ["metric", "value", "unit"], [
     ["Private Sale %", round(private_sale_pct, 2), "%"],
     ["Primary Made Tea %", round(primary_made_pct, 2), "%"],
     ["Secondary Made Tea %", round(secondary_made_pct, 2), "%"],
+    ["Avg GL Fine %", round(avg_gl_fine_pct, 1), "%"],
     ["generated", datetime.now().strftime("%Y-%m-%d %H:%M"), "timestamp"],
 ])
 # Mandays — per-period totals (trend)
