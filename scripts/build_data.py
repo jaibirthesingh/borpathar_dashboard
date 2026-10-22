@@ -330,6 +330,7 @@ sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_in
 def _iso2d(s):
     try: return _dt.date.fromisoformat(str(s))
     except Exception: return None
+_mkt_by_sale = {r[0]: r[5] for r in _prembysale_rows}  # sale_no -> market_avg_inr_kg
 _lv = []
 for a in advices:
     if not a.get("date") or not a.get("avg"): continue
@@ -342,8 +343,9 @@ for a in advices:
         if _pf and _pt and _pf <= _tgt <= _pt: _lf = w; break
     if _lf:
         _lv.append([a["sale_no"], a["date"], round((_lf.get("rate") or 0),2),
-                    _lf.get("fine_pct"), round(a["avg"],2)])
-sheet("LeafVsAuction", ["sale_no","date","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg"], _lv)
+                    _lf.get("fine_pct"), round(a["avg"],2), _mkt_by_sale.get(a["sale_no"])])
+# all four series in ONE contiguous table so a single chart draws every line (Mac-safe)
+sheet("LeafVsAuction", ["sale_no","date","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
