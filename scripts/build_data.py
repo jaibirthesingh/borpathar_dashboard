@@ -331,23 +331,29 @@ def _iso2d(s):
     try: return _dt.date.fromisoformat(str(s))
     except Exception: return None
 _mkt_by_sale = {r[0]: r[5] for r in _prembysale_rows}  # sale_no -> market_avg_inr_kg
-# Keyed by LEAF WEEK so leaf extends back to 01-Apr. Each week gets the auction number it feeds,
-# back-calculated from the weekly cadence (anchor: sale 20 = 12-May-2026) and the 3-week leaf->auction
-# lag. Auction/market fill only where a real sale exists (20-42); earlier leaf sits at sale<20,
-# and the most recent leaf (not yet auctioned) at sale>42. One contiguous table => Mac-safe chart.
+# Keyed by LEAF WEEK so leaf extends back to 01-Apr. Each week is placed at the auction it feeds,
+# matched on the ACTUAL sale dates (3-week lag), so irregular gaps (e.g. sale 31/32) line up right.
+# Overlap rows carry the real sale no + real sale date + price; leaf with no real sale (April lead-in
+# or recent unsold weeks) gets a projected sale no/date by cadence and blank price. Column names are
+# unchanged (sale_no, date, ...) so the existing query refreshes without a type-step break.
 _SALE20_NO, _SALE20_DT = 20, _dt.date(2026, 5, 12)
-_sale_data = {a["sale_no"]: (round(a["avg"], 2) if a.get("avg") else None, _mkt_by_sale.get(a["sale_no"]))
-              for a in advices if a.get("sale_no")}
+_real = sorted([(a["sale_no"], _iso2d(a["date"]),
+                 round(a["avg"], 2) if a.get("avg") else None, _mkt_by_sale.get(a["sale_no"]))
+                for a in advices if a.get("sale_no") and _iso2d(a.get("date"))], key=lambda s: s[1])
 _lv = []
 for w in leafq:
     _pt = _iso2d(w["period_to"])
     if not _pt: continue
-    _fed = _SALE20_NO + round(((_pt + _dt.timedelta(days=21)) - _SALE20_DT).days / 7)
-    _auc, _mkt = _sale_data.get(_fed, (None, None))
-    _lv.append([_fed, w["period_from"], round((w.get("rate") or 0), 2),
-                w.get("fine_pct"), _auc, _mkt])
+    _target = _pt + _dt.timedelta(days=21)  # the sale date this leaf week feeds
+    _best = min(_real, key=lambda s: abs((s[1] - _target).days)) if _real else None
+    if _best and abs((_best[1] - _target).days) <= 4:      # matched a real sale
+        _sno, _sdate, _auc, _mkt = _best[0], _best[1].isoformat(), _best[2], _best[3]
+    else:                                                  # no real sale -> project by cadence
+        _sno = _SALE20_NO + round((_target - _SALE20_DT).days / 7)
+        _sdate, _auc, _mkt = _target.isoformat(), None, None
+    _lv.append([_sno, _sdate, round((w.get("rate") or 0), 2), w.get("fine_pct"), _auc, _mkt])
 _lv.sort(key=lambda r: r[0])
-sheet("LeafVsAuction", ["sale_no","leaf_week_from","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
+sheet("LeafVsAuction", ["sale_no","date","gl_rate_inr_kg","fine_pct","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
