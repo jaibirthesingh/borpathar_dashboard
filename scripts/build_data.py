@@ -325,24 +325,7 @@ sheet("PremiumBySale", ["sale_no","date","vol_wtd_premium","sold_kg","my_avg_inr
 sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","fine_pct"],
     [[r["period_from"], r["period_to"], round(r["gl_kg"],1), round((r["rate"] or 0),2),
       round((r["amount"] or 0),0), r["fine_pct"]] for r in leafq])
-# LeafVsAuction — one date axis of REAL dates. Every leaf week sits at its own date (GL rate +
-# fine% run from 01-Apr); every real sale sits at its own date (auction + market from the first
-# sale onward). A row is blank for whichever series has no reading on that date. Nothing invented
-# (no fake sales/dates) and nothing dropped (two sales in one week keep their own rows).
-def _iso2d(s):
-    try: return _dt.date.fromisoformat(str(s))
-    except Exception: return None
-_mkt_by_sale = {r[0]: r[5] for r in _prembysale_rows}  # sale_no -> market_avg_inr_kg
-_leaf_by_date = {w["period_from"]: (round((w.get("rate") or 0), 2), w.get("fine_pct")) for w in leafq}
-_sale_by_date = {a["date"]: (a["sale_no"], round(a["avg"], 2) if a.get("avg") else None,
-                             _mkt_by_sale.get(a["sale_no"]))
-                 for a in advices if a.get("date")}
-_lv = []
-for _d in sorted(set(_leaf_by_date) | set(_sale_by_date)):
-    _gr, _fp = _leaf_by_date.get(_d, (None, None))
-    _sno, _auc, _mkt = _sale_by_date.get(_d, (None, None, None))
-    _lv.append([_d, _gr, _fp, _sno, _auc, _mkt])
-sheet("LeafVsAuction", ["date","gl_rate_inr_kg","fine_pct","sale_no","auction_avg_inr_kg","market_avg_inr_kg"], _lv)
+# (LeafVsAuction tab removed — Manu builds that chart manually from LeafQuality / PremiumBySale.)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
