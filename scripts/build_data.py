@@ -206,17 +206,24 @@ for _l in priv_lines:
         _gp[_l["grade"]][1] += _l["qty"]
 grade_prices = sorted(([g, round(v/k, 2), round(k, 1)] for g, (v, k) in _gp.items() if k > 0),
                       key=lambda r: -r[2])  # sorted by sold kg, biggest first
-# Primary vs Secondary made tea %, from MFG daily sorting.
-# SEC column = secondary ("1"-suffix marks) bucket; everything else (incl. DUST) = primary.
-_mp = _ms = 0.0
-for _m in mfg:
-    for _g, _kg in (_m.get("sorting_grades_kg") or {}).items():
-        if _g == "TOTAL" or _kg is None: continue
-        if _g == "SEC": _ms += _kg
-        else: _mp += _kg
-_made_sorted = _mp + _ms
-primary_made_pct = (_mp/_made_sorted*100) if _made_sorted else 0
-secondary_made_pct = (_ms/_made_sorted*100) if _made_sorted else 0
+# Primary vs Secondary made tea %: READ the report's own maintained to-date figure (latest MFG
+# report), NOT re-derived — summing daily sorting columns drifts from the report's cumulative
+# (sorting lags/corrects over following days). Fall back to the daily-sum only if the field is absent.
+primary_made_pct = secondary_made_pct = 0
+if mfg and mfg[-1].get("primary_tea_pct") is not None:
+    primary_made_pct = mfg[-1]["primary_tea_pct"]
+    secondary_made_pct = (mfg[-1].get("secondary_tea_pct")
+                          if mfg[-1].get("secondary_tea_pct") is not None else 100 - primary_made_pct)
+else:
+    _mp = _ms = 0.0
+    for _m in mfg:
+        for _g, _kg in (_m.get("sorting_grades_kg") or {}).items():
+            if _g == "TOTAL" or _kg is None: continue
+            if _g == "SEC": _ms += _kg
+            else: _mp += _kg
+    _made_sorted = _mp + _ms
+    primary_made_pct = (_mp/_made_sorted*100) if _made_sorted else 0
+    secondary_made_pct = (_ms/_made_sorted*100) if _made_sorted else 0
 
 # --- PREMIUM OVER MARKET (primary grades; benchmark = GUW+BLF grade gap) ---
 # Secondaries ("1"-suffix) have no benchmark in the report -> primary-only by design.

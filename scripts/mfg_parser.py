@@ -66,5 +66,8 @@ def parse_mfg(path):
                         grades[h.strip()]=_num(row[cc])
                 break
     d['sorting_grades_kg']=grades
+    # report's OWN maintained cumulative primary/secondary % (authoritative; don't re-derive)
+    d['primary_tea_pct']=_num(right('Primary Tea Percentage'))
+    d['secondary_tea_pct']=_num(right('Secondary Tea Percentage'))
     d['_source']=path.split('/')[-1]
     return d
