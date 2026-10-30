@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser, grade_gap_parser, leaf_quality_parser
+import mfg_parser, advice_parser, green_leaf_parser, tally_parser, mandays_parser, electricity_parser, private_advice_parser, grade_gap_parser, leaf_quality_parser, sold_price_parser
 
 RECOVERY = 0.22
 MULT = 4.545
@@ -43,6 +43,39 @@ for f in sorted(glob.glob(os.path.join(ROOT, "sale_advices", "*.pdf"))):
     try: advices.append(advice_parser.parse_advice(f))
     except Exception as e: print("  ! advice skip", f, e)
 advices = [a for a in advices if a.get("sale_no")]; advices.sort(key=lambda a: a["sale_no"])
+
+# SOLD PRICE reports (richer successor to the advice): per-sale folder, one+ catalogue PDFs each,
+# read recursively and merged by sale. Carries buyers + bids on unsold lots. Dates aren't in the
+# file, so we borrow them from the advice (by sale_no); falling back to the weekly cadence.
+import datetime as _dt0
+_adv_date = {a["sale_no"]: a["date"] for a in advices if a.get("date")}
+_SP_ANCHOR = _dt0.date(2026, 5, 12)  # sale 20
+def _sp_date(s):
+    return _adv_date.get(s) or (_SP_ANCHOR + _dt0.timedelta(weeks=s - 20)).isoformat()
+_sp = {}
+for f in sorted(glob.glob(os.path.join(ROOT, "sold_price_report", "**", "*.pdf"), recursive=True)):
+    if os.path.basename(f).startswith("~$"): continue
+    try: r = sold_price_parser.parse_sold_price(f)
+    except Exception as e: print("  ! sold_price skip", f, e); continue
+    s = r.get("sale_no")
+    if not s: continue
+    _sp.setdefault(s, {"sale_no": s, "lots": []})["lots"] += r["lots"]
+sold_prices = []
+for s, d in sorted(_sp.items()):
+    lots = d["lots"]
+    _sk = sum(l["net_wt"] for l in lots if l["sold"])
+    _sv = sum(l["price"] * l["net_wt"] for l in lots if l["sold"] and l["price"])
+    _nsold = sum(1 for l in lots if l["sold"])
+    sold_prices.append(dict(sale_no=s, date=_sp_date(s), offered=None, sold=round(_sk, 1),
+                            avg=round(_sv / _sk, 2) if _sk else 0, lots=lots,
+                            clearance_lots=(round(_nsold / len(lots), 4) if lots else 0),
+                            n_lots=len(lots), n_sold=_nsold))
+# Prefer SOLD PRICE per sale; fall back to the advice for any sale not yet in the new format.
+if sold_prices:
+    _sps = set(_sp)
+    advices = sorted(sold_prices + [a for a in advices if a["sale_no"] not in _sps],
+                     key=lambda a: a["sale_no"])
+print(f"  sold_price: {len(sold_prices)} sales in new format")
 
 # grade-gap benchmark: one Parcon Range-Grade-Report .xlsx per sale (GUW+BLF market avg/grade)
 gradegap = []
@@ -316,13 +349,31 @@ sheet("Electricity", ["period_start","period_end","units_kwh","bill_amount_inr",
 #  data plus fine%. The green-leaf price feed still loads and feeds KPIs, just isn't re-displayed.)
 # Auction — per-sale, now also carrying the per-sale premium (merged in from the old PremiumBySale tab)
 _pbs = {r[0]: r for r in _prembysale_rows}  # sale_no -> [sale, date, premium, sold_kg, my_avg, market_avg]
+def _unsold(a):  # weight-based where offered known (advice); lot-count based for SOLD PRICE
+    if a.get("offered"):
+        return round(1 - (a["sold"] or 0)/a["offered"], 4)
+    if a.get("clearance_lots") is not None:
+        return round(1 - a["clearance_lots"], 4)
+    return 0
 sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct",
                   "my_avg_inr_kg","market_avg_inr_kg","vol_wtd_premium"],
-    [[a["sale_no"], a["date"], round(a["offered"] or 0,1), round(a["sold"] or 0,1), round(a["avg"] or 0,2),
-      round((1-(a["sold"] or 0)/a["offered"]) if a["offered"] else 0,4),
+    [[a["sale_no"], a["date"], (round(a["offered"],1) if a.get("offered") else None),
+      round(a["sold"] or 0,1), round(a["avg"] or 0,2), _unsold(a),
       (_pbs[a["sale_no"]][4] if a["sale_no"] in _pbs else None),
       (_pbs[a["sale_no"]][5] if a["sale_no"] in _pbs else None),
       (_pbs[a["sale_no"]][2] if a["sale_no"] in _pbs else None)] for a in advices])
+# Buyers — who buys your tea (from SOLD PRICE), ranked by volume: kg, avg price, reach, grades
+from collections import defaultdict as _dd
+_buy = _dd(lambda: {"kg":0.0,"val":0.0,"lots":0,"sales":set(),"grades":set()})
+for _sp in sold_prices:
+    for _l in _sp["lots"]:
+        if _l["sold"] and _l.get("buyer") and _l["price"]:
+            _b=_buy[_l["buyer"]]; _b["kg"]+=_l["net_wt"]; _b["val"]+=_l["price"]*_l["net_wt"]
+            _b["lots"]+=1; _b["sales"].add(_sp["sale_no"]); _b["grades"].add(_l["grade"])
+_buyer_rows = sorted(([bn, round(v["kg"],1), round(v["val"]/v["kg"],2) if v["kg"] else 0,
+                       v["lots"], len(v["sales"]), ", ".join(sorted(v["grades"]))]
+                      for bn,v in _buy.items()), key=lambda r:-r[1])
+sheet("Buyers", ["buyer","sold_kg","avg_price_inr_kg","n_lots","n_sales","grades"], _buyer_rows)
 # GradePrices — all-channel (auction + private) avg sold price per grade, kg-weighted
 sheet("GradePrices", ["Grade","Avg Sold Price","Sold Kg"], grade_prices)
 # Benchmark — GUW+BLF market avg price, per sale per grade (Parcon grade gap)
