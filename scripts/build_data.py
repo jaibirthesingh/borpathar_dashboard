@@ -312,27 +312,31 @@ sheet("Mandays", ["period_start","period_end","total_mandays"],
 sheet("Electricity", ["period_start","period_end","units_kwh","bill_amount_inr","max_demand_kva","power_factor"],
     [[b.get("start"), b.get("end"), b.get("units_kwh"), b.get("bill_amount"),
       b.get("max_demand_kva"), b.get("power_factor")] for b in elec])
-# GreenLeaf
-sheet("GreenLeaf", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","made_equiv_kg","made_cost_inr_kg"],
-    [[g["period_from"], g["period_to"], round(g["kg"],1), round(g["rate"],2), round(g["amount"],0),
-      round(g["kg"]*RECOVERY,1), round(g["rate"]*MULT+conv_used,2)] for g in green])
-# Auction
-sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct"],
+# (GreenLeaf tab removed — consolidated into LeafQuality, which holds the same leaf-by-period
+#  data plus fine%. The green-leaf price feed still loads and feeds KPIs, just isn't re-displayed.)
+# Auction — per-sale, now also carrying the per-sale premium (merged in from the old PremiumBySale tab)
+_pbs = {r[0]: r for r in _prembysale_rows}  # sale_no -> [sale, date, premium, sold_kg, my_avg, market_avg]
+sheet("Auction", ["sale_no","date","offered_kg","sold_kg","avg_inr_kg","unsold_pct",
+                  "my_avg_inr_kg","market_avg_inr_kg","vol_wtd_premium"],
     [[a["sale_no"], a["date"], round(a["offered"] or 0,1), round(a["sold"] or 0,1), round(a["avg"] or 0,2),
-      round((1-(a["sold"] or 0)/a["offered"]) if a["offered"] else 0,4)] for a in advices])
+      round((1-(a["sold"] or 0)/a["offered"]) if a["offered"] else 0,4),
+      (_pbs[a["sale_no"]][4] if a["sale_no"] in _pbs else None),
+      (_pbs[a["sale_no"]][5] if a["sale_no"] in _pbs else None),
+      (_pbs[a["sale_no"]][2] if a["sale_no"] in _pbs else None)] for a in advices])
 # GradePrices — all-channel (auction + private) avg sold price per grade, kg-weighted
 sheet("GradePrices", ["Grade","Avg Sold Price","Sold Kg"], grade_prices)
 # Benchmark — GUW+BLF market avg price, per sale per grade (Parcon grade gap)
 sheet("Benchmark", ["sale_no","grade","market_inr_kg"], _bench_rows)
 # Premium — my auction price minus market, per sale per primary grade
 sheet("Premium", ["sale_no","grade","my_inr_kg","market_inr_kg","premium_inr_kg","sold_kg"], _prem_rows)
-# PremiumBySale — headline: volume-weighted premium per sale (your price vs market)
-sheet("PremiumBySale", ["sale_no","date","vol_wtd_premium","sold_kg","my_avg_inr_kg","market_avg_inr_kg"], _prembysale_rows)
-# LeafQuality — weekly GL_KG/AV.RATE feed: fine% + volume for the quality analysis (separate feed)
-sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","fine_pct"],
+# (PremiumBySale tab removed — its per-sale premium columns are merged into Auction above.)
+# LeafQuality — the single leaf tab (weekly GL_KG/AV.RATE feed): kg, rate, amount, fine%, + made cost (from old GreenLeaf)
+sheet("LeafQuality", ["period_from","period_to","gl_kg","rate_inr_kg","amount_inr","fine_pct",
+                      "made_equiv_kg","made_cost_inr_kg"],
     [[r["period_from"], r["period_to"], round(r["gl_kg"],1), round((r["rate"] or 0),2),
-      round((r["amount"] or 0),0), r["fine_pct"]] for r in leafq])
-# (LeafVsAuction tab removed — Manu builds that chart manually from LeafQuality / PremiumBySale.)
+      round((r["amount"] or 0),0), r["fine_pct"],
+      round(r["gl_kg"]*RECOVERY,1), round((r["rate"] or 0)*MULT+conv_used,2)] for r in leafq])
+# (LeafVsAuction tab removed — Manu builds that chart manually from LeafQuality / Auction.)
 # Production
 gcols = ["BOP","SM","BP","PF","PD","DUST","SEC"]
 sheet("Production", ["date","gl_consumed_kg","gl_received_kg","tea_made_kg","recovery_today_pct","fine_pct","labour_inr_kg","coal_kg_kg"]+gcols,
