@@ -374,6 +374,16 @@ _buyer_rows = sorted(([bn, round(v["kg"],1), round(v["val"]/v["kg"],2) if v["kg"
                        v["lots"], len(v["sales"]), ", ".join(sorted(v["grades"]))]
                       for bn,v in _buy.items()), key=lambda r:-r[1])
 sheet("Buyers", ["buyer","sold_kg","avg_price_inr_kg","n_lots","n_sales","grades"], _buyer_rows)
+# BuyerDetail — invoice-level trace (YOUR invoice #, not Parcon's PAR lot#): one row per sold lot.
+# Sorted by buyer then sale so you can filter to Teloijan (or anyone) and see which invoices they took.
+_detail = []
+for _sp in sold_prices:
+    for _l in _sp["lots"]:
+        if _l["sold"] and _l.get("buyer"):
+            _detail.append([_l["inv"], _sp["sale_no"], _l["grade"],
+                            round(_l["net_wt"],1), _l["price"], _l["buyer"]])
+_detail.sort(key=lambda r: (r[5], r[1]))   # buyer, then sale
+sheet("BuyerDetail", ["invoice","sale_no","grade","sold_kg","price_inr_kg","buyer"], _detail)
 # GradePrices — all-channel (auction + private) avg sold price per grade, kg-weighted
 sheet("GradePrices", ["Grade","Avg Sold Price","Sold Kg"], grade_prices)
 # Benchmark — GUW+BLF market avg price, per sale per grade (Parcon grade gap)
